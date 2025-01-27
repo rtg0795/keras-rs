@@ -1,4 +1,7 @@
+import os
+import tempfile
 import unittest
+from typing import Any
 
 import keras
 import numpy as np
@@ -54,3 +57,22 @@ class TestCase(unittest.TestCase):
         if not isinstance(desired, np.ndarray):
             desired = keras.ops.convert_to_numpy(desired)
         np.testing.assert_array_equal(actual, desired, err_msg=msg)
+
+    def run_model_saving_test(
+        self,
+        model: Any,
+        input_data: Any,
+        atol: float = 1e-6,
+        rtol: float = 1e-6,
+    ) -> None:
+        """Save and load a model from disk and assert output is unchanged."""
+        model_output = model(input_data)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "model.keras")
+            model.save(path, save_format="keras_v3")
+            restored_model = keras.models.load_model(path)
+
+        # # Check that output matches.
+        restored_output = restored_model(input_data)
+        self.assertAllClose(model_output, restored_output, atol=atol, rtol=rtol)
