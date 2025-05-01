@@ -416,9 +416,9 @@ def preprocess_rating(x):
             "raw_user_age": features["raw_user_age"],
             "user_gender": features["user_gender"],
             "user_occupation_label": features["user_occupation_label"],
-            "user_gender_X_raw_user_age": features[
-                "user_gender_X_raw_user_age"
-            ],
+            "user_gender_X_raw_user_age": tf.squeeze(
+                features["user_gender_X_raw_user_age"], axis=-1
+            ),
             # Movie inputs are movie ID, vectorized title and genres
             "movie_id": int(x["movie_id"]),
             "movie_title_vector": features["movie_title"],
@@ -663,7 +663,7 @@ class RetrievalModel(keras.Model):
         self.update_candidates()  # Provide an initial set of candidates
         self.loss_fn = keras.losses.MeanSquaredError()
         self.top_k_metric = keras.metrics.SparseTopKCategoricalAccuracy(
-            k=100, from_sorted_ids=True
+            k=retrieval_k, from_sorted_ids=True
         )
 
     def update_candidates(self):

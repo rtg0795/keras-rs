@@ -1,12 +1,12 @@
 import abc
-from typing import Optional
+from typing import Any, Optional
 
 import keras
 from keras import ops
 
 from keras_rs.src import types
-from keras_rs.src.utils.pairwise_loss_utils import pairwise_comparison
-from keras_rs.src.utils.pairwise_loss_utils import process_loss_call_inputs
+from keras_rs.src.losses.pairwise_loss_utils import pairwise_comparison
+from keras_rs.src.metrics.utils import standardize_call_inputs_ranks
 
 
 class PairwiseLoss(keras.losses.Loss, abc.ABC):
@@ -22,14 +22,22 @@ class PairwiseLoss(keras.losses.Loss, abc.ABC):
     `pairwise_loss` method.
     """
 
-    # TODO: Add `temperature`, `lambda_weights`.
+    def __init__(self, temperature: float = 1.0, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+
+        if temperature <= 0.0:
+            raise ValueError(
+                f"`temperature` should be a positive float. Received: "
+                f"`temperature` = {temperature}."
+            )
+
+        self.temperature = temperature
+
+        # TODO(abheesht): Add `lambda_weights`.
 
     @abc.abstractmethod
     def pairwise_loss(self, pairwise_logits: types.Tensor) -> types.Tensor:
-        raise NotImplementedError(
-            "All subclasses of `keras_rs.losses.pairwise_loss.PairwiseLoss`"
-            "must implement the `pairwise_loss()` method."
-        )
+        pass
 
     def compute_unreduced_loss(
         self,
@@ -50,6 +58,10 @@ class PairwiseLoss(keras.losses.Loss, abc.ABC):
             mask=valid_mask,
             logits_op=ops.subtract,
         )
+        pairwise_logits = ops.divide(
+            pairwise_logits,
+            ops.cast(self.temperature, dtype=pairwise_logits.dtype),
+        )
 
         return self.pairwise_loss(pairwise_logits), pairwise_labels
 
@@ -58,7 +70,8 @@ class PairwiseLoss(keras.losses.Loss, abc.ABC):
         y_true: types.Tensor,
         y_pred: types.Tensor,
     ) -> types.Tensor:
-        """
+        """Compute the pairwise loss.
+
         Args:
             y_true: tensor or dict. Ground truth values. If tensor, of shape
                 `(list_size)` for unbatched inputs or `(batch_size, list_size)`
@@ -66,11 +79,14 @@ class PairwiseLoss(keras.losses.Loss, abc.ABC):
                 in loss computation. If it is a dictionary, it should have two
                 keys: `"labels"` and `"mask"`. `"mask"` can be used to ignore
                 elements in loss computation, i.e., pairs will not be formed
-                with those items. Note that the final mask is an and of the
-                passed mask, and `labels == -1`.
+                with those items. Note that the final mask is an `and` of the
+                passed mask, and `labels >= 0`.
             y_pred: tensor. The predicted values, of shape `(list_size)` for
                 unbatched inputs or `(batch_size, list_size)` for batched
                 inputs. Should be of the same shape as `y_true`.
+
+        Returns:
+            The loss.
         """
         mask = None
         if isinstance(y_true, dict):
@@ -83,7 +99,14 @@ class PairwiseLoss(keras.losses.Loss, abc.ABC):
             mask = y_true.get("mask", None)
             y_true = y_true["labels"]
 
-        y_true, y_pred, mask = process_loss_call_inputs(y_true, y_pred, mask)
+        y_true = ops.convert_to_tensor(y_true)
+        y_pred = ops.convert_to_tensor(y_pred)
+        if mask is not None:
+            mask = ops.convert_to_tensor(mask)
+
+        y_true, y_pred, mask, _ = standardize_call_inputs_ranks(
+            y_true, y_pred, mask
+        )
 
         losses, weights = self.compute_unreduced_loss(
             labels=y_true, logits=y_pred, mask=mask
@@ -92,9 +115,14 @@ class PairwiseLoss(keras.losses.Loss, abc.ABC):
         losses = ops.sum(losses, axis=-1)
         return losses
 
+    def get_config(self) -> dict[str, Any]:
+        config: dict[str, Any] = super().get_config()
+        config.update({"temperature": self.temperature})
+        return config
+
 
 pairwise_loss_subclass_doc_string = (
-    "Computes pairwise hinge loss between true labels and predicted scores."
+    "Computes pairwise {loss_name} between true labels and predicted scores."
     """
     This loss function is designed for ranking tasks, where the goal is to
     correctly order items within each list. It computes the loss by comparing
@@ -110,11 +138,12 @@ pairwise_loss_subclass_doc_string = (
     ```
 
     where:
-      - `y_i` and `y_j` are the true labels of items `i` and `j`, respectively.
-      - `s_i` and `s_j` are the predicted scores of items `i` and `j`,
-        respectively.
-      - `I(y_i > y_j)` is an indicator function that equals 1 if `y_i > y_j`,
-        and 0 otherwise.{explanation}
+
+    - `y_i` and `y_j` are the true labels of items `i` and `j`, respectively.
+    - `s_i` and `s_j` are the predicted scores of items `i` and `j`,
+      respectively.
+    - `I(y_i > y_j)` is an indicator function that equals 1 if `y_i > y_j`,
+      and 0 otherwise.{explanation}
     Args:{extra_args}
         reduction: Type of reduction to apply to the loss. In almost all cases
             this should be `"sum_over_batch_size"`. Supported options are
@@ -130,5 +159,7 @@ pairwise_loss_subclass_doc_string = (
             `"float32"` unless set to different value
             (via `keras.backend.set_floatx()`). If a `keras.DTypePolicy` is
             provided, then the `compute_dtype` will be utilized.
-    """
+
+    Examples:
+{example}"""
 )
